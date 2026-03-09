@@ -28,10 +28,12 @@ model=ChatGroq(model="llama-3.1-8b-instant", temperature=0.1, timeout=20)
 # HELPERS
 # --------------------------------------------------
 def format_qa(questions, answers):
-    return "\n".join(
-        f"Q{i+1}: {q}\nA{i+1}: {a}"
-        for i, (q, a) in enumerate(zip(questions, answers))
-    )
+    formatted = []
+    for i, (q, a) in enumerate(zip(questions, answers)):
+        # Make empty answers explicit for the LLM
+        display_answer = a.strip() if a and a.strip() else "(Candidate provided no response / Empty answer)"
+        formatted.append(f"Q{i+1}: {q}\nA{i+1}: {display_answer}")
+    return "\n".join(formatted)
 
 # --------------------------------------------------
 # PROMPTS
@@ -319,9 +321,9 @@ def evaluate_answer_quality(state: InterviewState):
     latest_answer = state["answer_history"][-1]
 
     prompt = f"""
-You are a senior technical interviewer.
+You are a senior technical interviewer. You are strict, critical, and accurate.
 
-Evaluate the candidate's answer.
+Evaluate the candidate's answer based on the question asked.
 
 Question:
 {state['current_question']}
@@ -340,26 +342,33 @@ Return ONLY valid JSON in this format:
   "follow_up_required": true/false
 }}
 
-Rules:
-- If answer is vague → low depth
-- If missing examples → weak clarity
-- If incomplete → follow_up_required = true
-- No explanation outside JSON
+Strict Grading Rules:
+1. If the answer is EMPTY, whitespace only, or strictly non-technical (e.g., "I don't know", "skip", "test") → Score 0 for everything and set follow_up_required to true.
+2. If the answer is vague or lacks specific examples → low depth score (1-3).
+3. If the answer is partially correct but missing key points → medium quality (4-6).
+4. Only award 9-10 scores for exceptionally clear, accurate, and detailed technical answers.
+5. No explanation outside JSON.
 """
 
     result = llm.invoke(prompt).content.strip()
 
     try:
+        # Clean up potential markdown blocks from LLM response
+        if result.startswith("```json"):
+            result = result.split("```json")[1].split("```")[0].strip()
+        elif result.startswith("```"):
+            result = result.split("```")[1].split("```")[0].strip()
+            
         data = json.loads(result)
     except:
-        # fallback if JSON fails
+        # fallback if JSON fails - use minimal points
         data = {
-            "quality_score": 5,
-            "depth_score": 5,
-            "clarity_score": 5,
-            "confidence_level": "medium",
-            "weak_areas": [],
-            "follow_up_required": False
+            "quality_score": 0,
+            "depth_score": 0,
+            "clarity_score": 0,
+            "confidence_level": "low",
+            "weak_areas": ["System failed to parse evaluation"],
+            "follow_up_required": True
         }
 
     state["quality_score"] = data["quality_score"]
@@ -416,15 +425,20 @@ def generate_question(state: InterviewState):
         temperature=0.4
     )
 
+    q_count = state.get("question_count", 0)
+    candidate_name = state.get("candidate_name", "Candidate")
 
-    """ llm=ChatOpenAI(
-        model="arcee-ai/trinity-large-preview:free",
-        base_url="https://openrouter.ai/api/v1",
-        api_key=os.getenv("OPENROUTER_API_KEY"),
-        temperature=0,
-                
-     )"""
+    # 1. First Question: Greeting
+    if q_count == 0:
+        state["current_question"] = f"Hello {candidate_name}, how are you today?"
+        return state
 
+    # 2. Second Question: Introduction
+    if q_count == 1:
+        state["current_question"] = "Thank you. To start, could you please tell me a bit about yourself and your professional background?"
+        return state
+
+    # 3. Technical Questions (Start from q_count >= 2)
     docs = state["resume_vectorstore"].similarity_search(
         "skills experience projects", k=4
     )
@@ -433,41 +447,44 @@ def generate_question(state: InterviewState):
     previous_questions = state.get("question_history", [])
 
     prompt = f"""
-You are an adaptive AI interviewer.
+You are an AI interviewer conducting a technical screening (Round 1).
+Your goal is to assess foundational understanding and core concepts.
 
+Candidate Name: {candidate_name}
 Current Topic: {state.get('current_topic', '')}
-Difficulty Level: {state.get('difficulty_level', 2)}
+Difficulty Level: {state.get('difficulty_level', 2)} (On a 1-4 scale)
 Weak Areas: {state.get('weak_areas', [])}
-Follow Up Required: {state.get('follow_up_required', False)}
+Is Follow Up: {state.get('follow_up_required', False)}
 
 Resume Context:
 {context}
 
 Instructions:
+1. Screening Level: FOCUS ON FOUNDATIONAL QUESTIONS. Start with  "What is [Concept]?", "Explain the core idea of [Project/Tech]", or "How does [X] differ from [Y]?".
+   - Examples: "What is a RAG pipeline?", "How does LangGraph differ from LangChain?", "What is the purpose of vector embeddings?".
+2. If 'Is Follow Up' is True:
+   Ask a follow-up question that explores a related basic concept or clarifies their previous answer. Avoid jumping into complex implementation.
+3. Else:
+   Pick a NEW technical skill or project from the resume and ask a foundational "What is it?" or "How does it work?" type question.
+4. Coding Tasks: Occasionally (every 3rd technical question) ask for a very simple logic or code explanation (e.g., "Write a short function to chunk an array", "How do you handle errors in Python?").
+5. STYLE: Be professional, welcoming, and clear.
 
-- If Follow Up Required is True:
-  Ask a deeper follow-up question on SAME topic.
-  Focus specifically on weak areas.
-
-- Else:
-  Move to a NEW technical skill from resume.
-  Avoid repeating previous topics.
-
-Difficulty meaning:
-1 = Easy conceptual
-2 = Medium practical
-3 = Hard implementation
-4 = Advanced system design
-
-Rules:
+CRITICAL RULES:
+- Return ONLY the question text.
+- NEVER include labels like "Question:", "Follow Up:", or "Follow up required: True" in your response.
 - Ask ONLY ONE question.
-- Do NOT include explanation.
-- Do NOT repeat previous questions.
+- Do NOT include any explanations or conversational fillers outside the question.
+- Do NOT repeat previous questions: {previous_questions}
 """
 
     for _ in range(3):
         response = llm.invoke(prompt)
         question = response.content.strip()
+
+        # Clean up any potential tags the LLM might hallucinate
+        if ":" in question and any(tag in question.upper() for tag in ["QUESTION", "FOLLOW UP", "REQUIRED"]):
+             # Attempt to strip common tags
+             question = question.split(":")[-1].strip()
 
         if question not in previous_questions:
             state["current_question"] = question
@@ -499,7 +516,7 @@ def final_evaluation(state: InterviewState):
      )
     """ 
     prompt = f"""
-You are a senior technical interviewer.
+You are a senior technical interviewer. You are strict, critical, and provide highly accurate assessments.
 
 Candidate Name: 
 {state['candidate_name']}
@@ -515,18 +532,25 @@ Proctoring Report:
 - Looking Away Count: {state.get('looking_away_count', 0)}
 - Phone Detections: {state.get('phone_detection_count', 0)}
 
-Rules:
-- If Integrity Risk Score >= 6 → HIGH RISK
-- If 3–5 → MODERATE RISK
-- If <= 2 → LOW RISK
+Assessment Rules:
+1. STRICTNESS: You are a "gatekeeper". If the candidate's answers are empty, garbage, or non-technical (e.g., "hi", "test", "skip"), they MUST receive an overall score of 0-2 and a "Strong No Hire".
+2. DATA COMPLETENESS: If the interview history contains fewer than 3 technical questions (excluding greetings/intro), the recommendation MUST be "No Hire" due to insufficient data, and the score should not exceed 3.
+3. EMPTY ANSWERS: Each empty answer (marked as just " " or "(empty)") is a automatic fail for that specific topic.
+4. GRADING SCALE:
+   - 0-3: Failed to answer basics, empty answers, or high integrity risk.
+   - 4-5: Significant technical gaps, very shallow knowledge.
+   - 6: Average. Answered most basic questions correctly but lacked depth. (Only award if at least 3 technical questions were answered well).
+   - 7-8: Strong technical understanding with some minor errors.
+   - 9-10: Exceptional depth, clear communication, and perfect accuracy.
+5. INTEGRITY IMPACT: If Integrity Risk Score >= 6 → Automatic "Strong No Hire" regardless of technical ability.
 
 Provide:
 - Overall score (out of 10)
 - Technical strengths
-- Technical weaknesses
+- Technical weaknesses (be specific - if they gave empty answers, state that they failed to respond)
 - Communication quality
 - Integrity assessment
-- Hiring recommendation
+- Hiring recommendation (Hire, No Hire, or Strong No Hire)
 - Short summary
 """
 

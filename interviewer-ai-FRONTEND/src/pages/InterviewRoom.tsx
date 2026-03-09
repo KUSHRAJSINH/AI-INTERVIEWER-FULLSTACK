@@ -1,9 +1,13 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
-import { Send, Mic, Square, Shield, User } from "lucide-react";
-import { submitAnswer, transcribeAudio, reportCheat, visionCheck } from "@/services/api";
+import { Send, Mic, Square, Shield, User, MessageSquare } from "lucide-react";
+import { submitAnswer, transcribeAudio, reportCheat, visionCheck, closeInterview } from "@/services/api";
 import { FaceLandmarker, FilesetResolver, ObjectDetector } from "@mediapipe/tasks-vision";
 import AIAvatarVideo from "@/components/AIAvatarVideo";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import { Badge } from "@/components/ui/badge";
+import { Label } from "@/components/ui/label";
 
 const InterviewRoom = () => {
   const navigate = useNavigate();
@@ -263,8 +267,10 @@ const InterviewRoom = () => {
   useEffect(() => {
     if (!isFaceDetectionEnabled || !videoRef.current) return;
 
-    let lastDetectionTime = 0;
-    const DETECTION_INTERVAL = 300; // run every 300ms (CPU safe)
+    let lastFaceDetectionTime = 0;
+    let lastObjectDetectionTime = 0;
+    const FACE_INTERVAL = 500;   // 2 times per second
+    const OBJECT_INTERVAL = 1500; // once every 1.5 seconds
 
     const phoneCooldownRef = { current: 0 };
     const lookAwayCooldownRef = { current: 0 };
@@ -277,162 +283,124 @@ const InterviewRoom = () => {
         const filesetResolver = await FilesetResolver.forVisionTasks(
           "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm"
         );
-        console.log("[Proctor] Fileset resolved");
 
         faceLandmarkerRef.current = await FaceLandmarker.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath:
               "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task",
-            delegate: "CPU",
+            delegate: "GPU", // Offload to GPU
           },
           runningMode: "VIDEO",
           numFaces: 2,
           outputFacialTransformationMatrixes: true,
         });
-        console.log("[Proctor] FaceLandmarker loaded successfully");
 
         objectDetectorRef.current = await ObjectDetector.createFromOptions(filesetResolver, {
           baseOptions: {
             modelAssetPath:
               "https://storage.googleapis.com/mediapipe-models/object_detector/efficientdet_lite0/float16/1/efficientdet_lite0.task",
-            delegate: "CPU",
+            delegate: "GPU", // Offload to GPU
           },
           runningMode: "VIDEO",
           scoreThreshold: 0.25,
           maxResults: 5,
         });
-        console.log("[Proctor] ObjectDetector loaded successfully");
 
         predictWebcam();
       } catch (err) {
-        console.error("[Proctor] Initialization failed. Check internet/CDN access:", err);
-        // Retry after 5s
+        console.error("[Proctor] Initialization failed:", err);
         setTimeout(setupDetection, 5000);
       }
     };
 
     const predictWebcam = () => {
-      if (!videoRef.current || !faceLandmarkerRef.current || !objectDetectorRef.current) {
-        requestRef.current = requestAnimationFrame(predictWebcam);
+      if (!videoRef.current || !faceLandmarkerRef.current || !objectDetectorRef.current || videoRef.current.readyState !== 4) {
+        requestRef.current = window.setTimeout(predictWebcam, 500);
         return;
       }
 
       const now = Date.now();
-
-      if (!loopLoggedRef.current) {
-        console.log("[Proctor] predictWebcam loop is now running");
-        loopLoggedRef.current = true;
-      }
-
-      // ✅ Throttle detection
-      if (now - lastDetectionTime < DETECTION_INTERVAL) {
-        requestRef.current = requestAnimationFrame(predictWebcam);
-        return;
-      }
-
-      lastDetectionTime = now;
-
       const startTimeMs = performance.now();
-
-      const faceResults = faceLandmarkerRef.current.detectForVideo(
-        videoRef.current,
-        startTimeMs
-      );
-
-      const objectResults = objectDetectorRef.current.detectForVideo(
-        videoRef.current,
-        startTimeMs
-      );
-
       let currentStatus: typeof faceStatus = "ok";
 
-      // ---------------- PHONE DETECTION ----------------
-      const phoneDetected = objectResults.detections.some((d) =>
-        d.categories.some(
-          (c) => (c.categoryName === "cell phone" || c.categoryName === "phone" || c.categoryName === "mobile phone") && c.score > 0.25
-        )
-      );
+      // --- 1. FACE DETECTION (PITCH/YAW/COUNT) ---
+      if (now - lastFaceDetectionTime >= FACE_INTERVAL) {
+        lastFaceDetectionTime = now;
+        const faceResults = faceLandmarkerRef.current.detectForVideo(videoRef.current, startTimeMs);
 
-      if (phoneDetected) {
-        currentStatus = "phone_detected";
-
-        if (!phoneStartTimeRef.current) {
-          phoneStartTimeRef.current = now;
-          phoneUseCaseRecordedRef.current = false;
-        } else {
-          const duration = now - phoneStartTimeRef.current;
-          if (duration >= 3000 && !phoneUseCaseRecordedRef.current) {
-            setPhoneUseCaseCount((prev) => prev + 1);
-            phoneUseCaseRecordedRef.current = true;
-            handleCheat("Persistent mobile phone usage (3-4s)");
+        if (!faceResults.faceLandmarks || faceResults.faceLandmarks.length === 0) {
+          currentStatus = "none";
+          if (now > noFaceCooldownRef.current) {
+            noFaceCooldownRef.current = now + 5000;
+            setIntegrityScore((prev) => Math.max(0, prev - 2));
+            handleCheat("No face detected");
           }
-        }
-
-        if (now > phoneCooldownRef.current) {
-          phoneCooldownRef.current = now + 5000; // 5 sec cooldown
-          handleCheat("Mobile phone detected");
-        }
-      } else {
-        phoneStartTimeRef.current = null;
-        phoneUseCaseRecordedRef.current = false;
-      }
-
-      // ---------------- FACE CHECK ----------------
-      if (!faceResults.faceLandmarks || faceResults.faceLandmarks.length === 0) {
-        currentStatus = "none";
-
-        if (now > noFaceCooldownRef.current) {
-          noFaceCooldownRef.current = now + 5000;
-          setIntegrityScore((prev) => Math.max(0, prev - 2));
-          handleCheat("No face detected");
-        }
-      }
-
-      // ---------------- MULTIPLE FACE ----------------
-      else if (faceResults.faceLandmarks.length > 1) {
-        currentStatus = "multiple";
-
-        if (now > multiFaceCooldownRef.current) {
-          multiFaceCooldownRef.current = now + 5000;
-          setIntegrityScore((prev) => Math.max(0, prev - 4));
-          handleCheat("Multiple faces detected");
-        }
-      }
-
-      // ---------------- HEAD POSE ----------------
-      else {
-        if (faceResults.facialTransformationMatrixes?.[0]) {
-          const matrix =
-            faceResults.facialTransformationMatrixes[0].data;
-
-          const yaw = Math.abs(
-            Math.atan2(matrix[2], matrix[10]) * (180 / Math.PI)
-          );
-
-          const pitch = Math.abs(
-            Math.atan2(-matrix[6], matrix[10]) * (180 / Math.PI)
-          );
+        } else if (faceResults.faceLandmarks.length > 1) {
+          currentStatus = "multiple";
+          if (now > multiFaceCooldownRef.current) {
+            multiFaceCooldownRef.current = now + 5000;
+            setIntegrityScore((prev) => Math.max(0, prev - 4));
+            handleCheat("Multiple faces detected");
+          }
+        } else if (faceResults.facialTransformationMatrixes?.[0]) {
+          const matrix = faceResults.facialTransformationMatrixes[0].data;
+          const yaw = Math.abs(Math.atan2(matrix[2], matrix[10]) * (180 / Math.PI));
+          const pitch = Math.abs(Math.atan2(-matrix[6], matrix[10]) * (180 / Math.PI));
 
           if (yaw > 20 || pitch > 20) {
             currentStatus = "looking_away";
-
             if (now > lookAwayCooldownRef.current) {
               lookAwayCooldownRef.current = now + 4000;
               handleCheat("Looking away from screen / Focus lost");
             }
           }
         }
+        setFaceStatus(currentStatus);
       }
 
-      setFaceStatus(currentStatus);
+      // --- 2. OBJECT DETECTION (MOBILE PHONE) ---
+      if (now - lastObjectDetectionTime >= OBJECT_INTERVAL) {
+        lastObjectDetectionTime = now;
+        const objectResults = objectDetectorRef.current.detectForVideo(videoRef.current, startTimeMs);
 
-      requestRef.current = requestAnimationFrame(predictWebcam);
+        const phoneDetected = objectResults.detections.some((d) =>
+          d.categories.some(
+            (c) => (c.categoryName === "cell phone" || c.categoryName === "phone" || c.categoryName === "mobile phone") && c.score > 0.25
+          )
+        );
+
+        if (phoneDetected) {
+          setFaceStatus("phone_detected");
+          if (!phoneStartTimeRef.current) {
+            phoneStartTimeRef.current = now;
+            phoneUseCaseRecordedRef.current = false;
+          } else {
+            const duration = now - phoneStartTimeRef.current;
+            if (duration >= 3000 && !phoneUseCaseRecordedRef.current) {
+              setPhoneUseCaseCount((prev) => prev + 1);
+              phoneUseCaseRecordedRef.current = true;
+              handleCheat("Persistent mobile phone usage");
+            }
+          }
+
+          if (now > phoneCooldownRef.current) {
+            phoneCooldownRef.current = now + 5000;
+            handleCheat("Mobile phone detected");
+          }
+        } else {
+          phoneStartTimeRef.current = null;
+          phoneUseCaseRecordedRef.current = false;
+        }
+      }
+
+      // Use setTimeout instead of requestAnimationFrame to yield back to the browser
+      requestRef.current = window.setTimeout(predictWebcam, 200);
     };
 
     setupDetection();
 
     return () => {
-      if (requestRef.current) cancelAnimationFrame(requestRef.current);
+      if (requestRef.current) clearTimeout(requestRef.current);
       if (faceLandmarkerRef.current) faceLandmarkerRef.current.close();
       if (objectDetectorRef.current) objectDetectorRef.current.close();
     };
@@ -442,29 +410,28 @@ const InterviewRoom = () => {
   useEffect(() => {
     if (!sessionId || !isFaceDetectionEnabled) return;
 
+    // Reuse a single canvas for all vision checks
+    const canvas = document.createElement("canvas");
+
     const interval = setInterval(async () => {
       if (!videoRef.current || videoRef.current.readyState !== 4) return;
 
-      // Capture frame
-      const canvas = document.createElement("canvas");
       canvas.width = videoRef.current.videoWidth;
       canvas.height = videoRef.current.videoHeight;
-      const ctx = canvas.getContext("2d");
+      const ctx = canvas.getContext("2d", { alpha: false });
       if (!ctx) return;
       ctx.drawImage(videoRef.current, 0, 0);
 
       canvas.toBlob(async (blob) => {
-        if (!blob) return;
+        if (!blob || !sessionId) return;
         try {
           const result = await visionCheck(sessionId, blob);
 
-          // Update integrity score and violation count from backend
           if (result.cheat_score !== undefined) {
             const calculatedScore = 100 - result.cheat_score * 10;
             setIntegrityScore(Math.max(0, calculatedScore));
           }
 
-          // Show alerts for new violations detected by backend
           if (result.new_violations && result.new_violations.length > 0) {
             setAlertMessage(result.new_violations[0]);
             setTimeout(() => setAlertMessage(null), 3000);
@@ -477,13 +444,12 @@ const InterviewRoom = () => {
         } catch (err) {
           console.error("Backend vision check failed", err);
         }
-      }, "image/jpeg", 0.7);
+      }, "image/jpeg", 0.6); // Reduced quality for speed
 
-    }, 3000); // Every 3 seconds to be friendly to CPU/Network
+    }, 4000); // 4 second interval
 
     return () => clearInterval(interval);
   }, [sessionId, isFaceDetectionEnabled]);
-
 
   // ---------------- RESILIENT & HYBRID RECORDING ----------------
   const startAutoRecording = async () => {
@@ -667,6 +633,31 @@ const InterviewRoom = () => {
     }
   };
 
+  const handleCloseInterview = async () => {
+    if (!sessionId) return;
+    if (!window.confirm("Are you sure you want to close the interview? you will be redirected to the evaluation page.")) return;
+
+    try {
+      setLoading(true);
+      // 1. Stop Speech
+      window.speechSynthesis.cancel();
+      // 2. Stop Recording
+      isSupposedToBeRecordingRef.current = false;
+      cleanupRecording();
+
+      // 3. Call API
+      await closeInterview(sessionId);
+
+      // 4. Navigate
+      navigate("/evaluation");
+    } catch (err) {
+      console.error("Failed to close interview", err);
+      alert("Error closing interview");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const integrityColor =
     integrityScore > 70
       ? "text-green-500"
@@ -688,6 +679,12 @@ const InterviewRoom = () => {
           <span className="text-sm text-red-500 ml-4">
             Violations: {violationCount}
           </span>
+          <button
+            onClick={handleCloseInterview}
+            className="ml-4 px-3 py-1.5 rounded-lg bg-red-500/10 text-red-500 border border-red-500/20 text-xs font-bold hover:bg-red-500 hover:text-white transition-all"
+          >
+            Close Interview
+          </button>
         </div>
       </header>
 
@@ -727,21 +724,46 @@ const InterviewRoom = () => {
           </div>
         </div>
 
-        <div className="lg:col-span-2 flex flex-col gap-4">
-          <div className="glass-card p-6">
-            <p className="text-base font-medium">
-              Question {questionNumber}
-            </p>
-            <p className="mt-2">{question}</p>
-          </div>
+        <div className="lg:col-span-2 flex flex-col gap-6">
+          <Card className="glass-card border-primary/20 glow-blue overflow-hidden">
+            <CardHeader className="pb-3 flex flex-row items-center justify-between space-y-0">
+              <div className="flex items-center gap-2">
+                <MessageSquare className="w-4 h-4 text-primary" />
+                <CardTitle className="text-sm font-medium text-muted-foreground uppercase tracking-wider">
+                  Question
+                </CardTitle>
+              </div>
+              <Badge variant="secondary" className="bg-primary/10 text-primary border-primary/20 font-bold px-3">
+                #{questionNumber}
+              </Badge>
+            </CardHeader>
+            <CardContent>
+              <p className="text-xl font-medium leading-relaxed text-foreground">
+                {question}
+              </p>
+            </CardContent>
+          </Card>
 
-          <textarea
-            value={answer}
-            onChange={(e) => setAnswer(e.target.value)}
-            onPaste={() => handleCheat("Paste attempt detected")}
-            placeholder="Type your answer..."
-            className="flex-1 w-full rounded-xl p-4 bg-white text-black border border-gray-300"
-          />
+          <div className="flex-1 flex flex-col gap-3">
+            <div className="flex items-center justify-between px-1">
+              <Label className="text-sm font-medium text-muted-foreground uppercase tracking-wider flex items-center gap-2">
+                <User className="w-4 h-4" />
+                Your Response
+              </Label>
+              {isRecording && (
+                <Badge variant="outline" className="animate-pulse bg-red-500/10 text-red-500 border-red-500/20">
+                  Listening...
+                </Badge>
+              )}
+            </div>
+            <Textarea
+              value={answer}
+              onChange={(e) => setAnswer(e.target.value)}
+              onPaste={() => handleCheat("Paste attempt detected")}
+              placeholder="Type your answer or speak..."
+              className="flex-1 min-h-[200px] text-lg bg-white/5 border-white/10 backdrop-blur-md focus-visible:ring-primary/50 focus-visible:border-primary/50 text-foreground resize-none transition-all duration-200"
+            />
+          </div>
 
           {/* ALERT POPUP */}
           {alertMessage && (
@@ -800,5 +822,4 @@ const InterviewRoom = () => {
 };
 
 export default InterviewRoom;
-
 

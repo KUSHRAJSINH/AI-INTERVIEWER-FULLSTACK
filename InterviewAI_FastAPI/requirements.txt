@@ -1,48 +1,55 @@
 # UI
-streamlit
+streamlit==1.42.2
 
 # LangChain core ecosystem
-langchain
-langchain-core
-langchain-community
+langchain==1.1.2
+langchain-core==1.2.17
+langchain-community==0.4.1
+langchain-openai==1.1.10
+langchain-huggingface==1.2.1
+langchain-text-splitters==1.1.0
 
 # LangGraph
-langgraph
+langgraph==1.0.4
 
 # Groq / ChatGroq
-groq
-langchain-groq
+groq==0.37.1
+langchain-groq==1.1.2
 
 # Anthropic (Claude)
-anthropic
-langchain-anthropic
+anthropic==0.49.0
+langchain-anthropic==0.3.11
 
 # Environment variables
-python-dotenv
+python-dotenv==1.1.0
 
-
-# Hugging Face embeddings
-sentence-transformers
-huggingface-hub
-transformers
-torch
+# Hugging Face embeddings & processing
+sentence-transformers==5.2.3
+huggingface-hub==1.5.0
+transformers==5.3.0
+torch==2.9.1+cpu
+pypdf==6.4.2
 
 # FAISS vector database
-faiss-cpu
-mediapipe
-opencv-python 
-numpy
-streamlit-webrtc
+faiss-cpu==1.10.0
 
+# Computer Vision & Proctoring
+mediapipe==0.10.21
+opencv-python==4.11.0.86
+ultralytics==8.3.82
+opencv-python-headless==4.11.0.86
 
-fastapi
-uvicorn
-python-multipart
+# Web
+streamlit-webrtc==0.47.1
+fastapi==0.115.11
+uvicorn==0.38.0
+python-multipart==0.0.20
 
+# Database
+sqlalchemy==2.0.45
+psycopg2-binary==2.9.10
+alembic==1.15.1
 
-ultralytics
-mediapipe
-opencv-python
-numpy
-
-
+# Utilities
+numpy==2.3.3
+pydantic==2.12.3

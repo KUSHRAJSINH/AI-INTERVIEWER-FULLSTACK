@@ -11,6 +11,15 @@ from app.node import (
     generate_question
 )
 from app.vision.proctor import analyze_frame
+from sqlalchemy.orm import Session
+from fastapi import Depends
+from db import models
+
+
+from db.database import get_db
+from db import crud
+
+
 
 MAX_CHEAT_SCORE = 100
 
@@ -61,7 +70,7 @@ def record_violation(session_id: str, violation_type: str, weight: int):
     return state, True
 
 @router.post("/start-interview")
-async def start_interview(file: UploadFile=File(...)):
+async def start_interview(file: UploadFile=File(...),db: Session = Depends(get_db)):
     os.makedirs("data",exist_ok=True)
     file_path=f"data/{uuid.uuid4()}.pdf"
 
@@ -98,6 +107,7 @@ async def start_interview(file: UploadFile=File(...)):
         "looking_away_count": 0,
         "phone_detection_count": 0,
         "last_violation_time": {}, # {type: timestamp}
+        "interview_closed": False,
     }
 
 
@@ -107,6 +117,15 @@ async def start_interview(file: UploadFile=File(...)):
 
     session_id=str(uuid.uuid4())
     sessions[session_id]=state
+
+    #save interview in database
+
+    crud.create_interview(
+        db=db,
+        session_id=session_id,
+        candidate_name=state['candidate_name'],
+        resume_path=file_path
+    )
 
 
     return{
@@ -156,17 +175,33 @@ async def vision_check(
 @router.post("/submit-answer")
 async def submit_answer(
     session_id: str = Form(...),
-    answer: str = Form(...)
+    answer: str = Form(...),
+    db: Session= Depends(get_db)
 ):
     state = sessions.get(session_id)
 
     if not state:
         return {"error": "Invalid session"}
 
+    if state.get("interview_closed"):
+        return {"error": "Interview already closed"}
+
     # Store answer
     state["answer_history"].append(answer)
     state["question_history"].append(state["current_question"])
     state["question_count"] += 1
+
+    #find interview id
+
+    interview=db.query(models.Interview).filter(models.Interview.session_id==session_id).first()
+
+    if interview:
+        crud.save_question_answer(
+            db=db,
+            interview_id=interview.id,
+            question=state['current_question'],
+            answer=answer
+        )
 
     # -----------------------------
     # TIME CHECK
@@ -236,12 +271,25 @@ async def report_cheat(
         "terminated": state["cheat_score"] >= MAX_CHEAT_SCORE,
         "recorded": recorded
     }
+
+@router.post("/close-interview")
+async def close_interview(session_id: str = Form(...)):
+    state = sessions.get(session_id)
+    if not state:
+        return {"error": "Invalid session"}
+
+    state["interview_closed"] = True
+    state["phase"] = "FINAL"
+    sessions[session_id] = state
+
+    return {"status": "closed"}
  
 
 
 
 @router.post("/final-report")
-async def final_report(session_id: str = Form(...)):
+async def final_report(session_id: str = Form(...),db:Session=Depends(get_db)):
+
 
     print("FINAL REPORT CALLED")
 
@@ -256,6 +304,18 @@ async def final_report(session_id: str = Form(...)):
 
     graph = final_graph()
     state = graph.invoke(state)
+
+
+    interview = db.query(models.Interview).filter(
+    models.Interview.session_id == session_id
+).first()
+
+    if interview:
+        crud.save_report(
+            db=db,
+            interview_id=interview.id,
+            report=state["final_report"]
+        )
 
     print("Final report generated")
 

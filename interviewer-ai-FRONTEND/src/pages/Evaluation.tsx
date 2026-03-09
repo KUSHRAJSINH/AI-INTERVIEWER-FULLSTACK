@@ -30,7 +30,7 @@ const Evaluation = () => {
         );
 
         const data = await response.json();
-        setReport(data.report);
+        setReport(data.report); 
       } catch (err) {
         console.error("Failed to fetch report:", err);
       } finally {

@@ -90,5 +90,19 @@ export async function visionCheck(sessionId: string, blob: Blob) {
   return res.json();
 }
 
+export async function closeInterview(sessionId: string) {
+  const formData = new FormData();
+  formData.append("session_id", sessionId);
+
+  const res = await fetch(`${API_BASE}/close-interview`, {
+    method: "POST",
+    body: formData,
+  });
+
+  if (!res.ok) throw new Error("Failed to close interview");
+
+  return res.json();
+}
+
 
 

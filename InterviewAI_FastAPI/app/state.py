@@ -69,7 +69,7 @@ class InterviewState(TypedDict):
 
     # Control (STREAMLIT ONLY)
     question_count: int
-    max_questions: int
+    max_questions: int 
 
     # Phase
     phase: str  # question | WAIT_FINAL | FINAL
@@ -83,6 +83,7 @@ class InterviewState(TypedDict):
 
     tab_switch_count: int
     tab_flagged_questions: List[int]
+    interview_closed: bool
 
 
     quality_score: int

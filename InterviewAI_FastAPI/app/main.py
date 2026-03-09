@@ -5,7 +5,14 @@ from app.routes import interview,speech
 #from app.state import InterviewState
 #import time
 
+from db.database import engine
+from db.models import Base
+
 app=FastAPI(title="AI INTERVIEW Backend")
+
+# create tables (handled by migrations)
+# Base.metadata.create_all(bind=engine)
+
 
 
 #allow forntend to connect

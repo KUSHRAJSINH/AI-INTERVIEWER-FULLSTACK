@@ -1,0 +1,116 @@
+#react markdown done
+#folder structure done
+ai avtar
+admin mail
+auth
+streaming
+autodetect voice
+code structure
+class base implement(code reusablity)
+
+
+still not autodetect voice bcz of weak whishper model
+# speech auto detection
+# face model is not proper working
+
+sandbox python or any language compiler
+             
+
+26/02/2026
+
+
+face detection working # done
+cheating detection extend # done
+speech check    # done                        
+ai avtar # done add video to ai avtar
+
+sendbox add
+interview recording-downloadd
+
+27/02/2026
+r &d about live kit
+ai avtar add
+checking work flow 
+git push
+sandbox add
+interview recording-downloadd
+live kit
+claw bot
+
+
+03/03/2026
+ai avtar real time speaking and question streaming
+checking workflow 
+sand box for coding 
+live kit
+claw  bot
+mcp project start
+db 
+
+
+
+
+ 06/-3/2026
+#---------------- Improvements
+
+
+InterviewAI FullStack Project Audit Report
+This report outlines the identified "fallbacks" (weaknesses) and proposed improvements for the InterviewAI project, covering both the FastAPI backend and React frontend.
+
+🔴 Critical Fallbacks (Weaknesses)
+1. In-Memory Session Storage (High Risk)
+Issue: The backend uses an in-memory dictionary (sessions = {}) to store all interview states.
+Impact: Restarting the server wipes all active interviews. It won't scale across multiple server instances (e.g., using Gunicorn/Uvicorn workers).
+Recommendation: Integrate Redis or PostgreSQL for session persistence.
+2. Database Disconnection
+Issue: Although SQLAlchemy models are defined, the core logic in 
+interview.py
+ does not save questions, answers, or reports to the database during the flow.
+Impact: No permanent record of interviews is kept.
+Recommendation: Add CRUD operations to submit-answer and final-report to persist data.
+3. State Synchronization in Frontend
+Issue: The "Hybrid Recording" logic in 
+InterviewRoom.tsx
+ has potential race conditions between Browser STT (live feedback) and Whisper STT (sync after stop).
+Impact: Whisper results might overwrite newer manual edits or miss parts of the conversation if the user starts talking again before sync finishes.
+Recommendation: Implement a more robust "transcript merging" logic or switch to a unified streaming STT (e.g., Deepgram or Whisper Streaming).
+4. Lack of Authentication & Security
+Issue: All API endpoints (/start-interview, /submit-answer, etc.) are public.
+Impact: Anyone can spam the API, potentially incurring high LLM costs and filling up storage with fake resumes.
+Recommendation: Implement JWT-based authentication and rate limiting.
+5. Resource Management
+
+Issue: Resumes are saved to 
+data/
+ but never deleted.
+Impact: Disk space will eventually run out.
+Recommendation: Use a cloud storage provider (S3) or implement a cleanup worker.
+🟡 Technical Improvements
+🚀 Performance & Optimizations
+Vectorstore Caching: Currently, the FAISS vectorstore is built from scratch on every start-interview. For large resumes or high traffic, this is slow. Use a persistent vector DB (Chroma, Qdrant) or cache embeddings.
+Frontend Vision Logic: Loading MediaPipe models from CDNs on every mount is slow. Host these models locally in the /public folder.
+LLM Selection: Llama-3-8B is great for speed but can be "hallucination-prone" for complex technical grading. Consider using a larger model (70B) or a specialized evaluator model for the final-report.
+🛠️ Code Quality
+Class-Based Implementation: As noted in your 
+improvements.txt
+, the backend logic (
+node.py
+, 
+interview.py
+) is very function-heavy. Refactoring into a SessionManager class would improve reusability.
+Prompt Isolation: Prompts are hardcoded in 
+node.py
+. Move them to a separate prompts/ directory or a CMS for easier tuning.
+🎨 User Experience (UX)
+Streaming LLM Responses: Currently, the user waits for the full question to be generated. Implementing streaming (SSE or WebSockets) would make the AI feel much more responsive.
+Enhanced TTS: Browser speechSynthesis is often "robotic". Using ElevenLabs or OpenAI TTS would significantly improve the "premium" feel.
+Mobile Experience: Add specific CSS for mobile viewports, as current layout assumes desktop.
+🟢 Suggested Next Steps (Roadmap)
+Fix Database Sync: Ensure every interview answer is saved to PostgreSQL.
+Persistence: Move sessions from memory to Redis/DB.
+Security: Add a simple Login/Signup flow.
+LiveKit Integration: For real-time video/audio handling instead of manual getUserMedia loops.
+
+
+
+role based acces hr can see db info if click button load db
