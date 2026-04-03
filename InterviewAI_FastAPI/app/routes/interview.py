@@ -18,8 +18,8 @@ from db import models
 
 from db.database import get_db
 from db import crud
-
-
+import shutil
+from app.utils.gcs_service import upload_resume
 
 MAX_CHEAT_SCORE = 100
 
@@ -29,6 +29,17 @@ router=APIRouter()
 
 
 sessions={}
+
+def restore_session_from_db(session_id:str,db):
+    interview= db.query(models.Interview).filter(
+        models.Interview.session_id==session_id
+    ).first()
+
+    if interview and interview.state_data:
+        sessions[session_id]=interview.state_data
+        return interview.state_data
+    return None
+
 
 def record_violation(session_id: str, violation_type: str, weight: int):
     state = sessions.get(session_id)
@@ -70,17 +81,19 @@ def record_violation(session_id: str, violation_type: str, weight: int):
     return state, True
 
 @router.post("/start-interview")
-async def start_interview(file: UploadFile=File(...),db: Session = Depends(get_db)):
-    os.makedirs("data",exist_ok=True)
-    file_path=f"data/{uuid.uuid4()}.pdf"
+async def start_interview(token: str = Form(...),file: UploadFile=File(...),db: Session = Depends(get_db)):
+    
+    invite = crud.get_invite_by_token(db, token)
 
-    with open(file_path,"wb") as buffer:
-        shutil.copyfileobj(file.file,buffer)
+    if not invite:
+        return {"error": "Invalid interview link"}
+    
+    resume_url = upload_resume(file.file)
 
     state={
-        "resume_path":file_path,
+        "resume_path": resume_url,
         "candidate_name":"",
-        "resume_vectorstore":None,
+        "resume_collection_name":"",
 
         "current_question":"",
         "current_answer":"",
@@ -124,8 +137,15 @@ async def start_interview(file: UploadFile=File(...),db: Session = Depends(get_d
         db=db,
         session_id=session_id,
         candidate_name=state['candidate_name'],
-        resume_path=file_path
+        resume_path=resume_url,
+        invite_id=invite.id
     )
+
+    # Update invite status to ongoing
+    crud.update_invite_status(db, invite.id, "ongoing")
+
+    # save initial state
+    crud.update_interview_state(db, session_id, state)
 
 
     return{
@@ -136,9 +156,14 @@ async def start_interview(file: UploadFile=File(...),db: Session = Depends(get_d
 @router.post("/vision-check")
 async def vision_check(
     session_id: str = Form(...),
-    file: UploadFile = File(...)
+    file: UploadFile = File(...),
+    db: Session= Depends(get_db)
 ):
     state = sessions.get(session_id)
+
+
+    if not state:
+        state = restore_session_from_db(session_id, db)
 
     if not state:
         return {"error": "Invalid session"}
@@ -179,6 +204,9 @@ async def submit_answer(
     db: Session= Depends(get_db)
 ):
     state = sessions.get(session_id)
+
+    if not state:
+       state = restore_session_from_db(session_id, db)
 
     if not state:
         return {"error": "Invalid session"}
@@ -225,6 +253,9 @@ async def submit_answer(
 
     sessions[session_id] = state
 
+    if interview:
+        crud.update_interview_state(db, session_id, state)
+
     return {"question": state["current_question"]}
 
 
@@ -235,9 +266,13 @@ async def submit_answer(
 @router.post("/report-cheat")
 async def report_cheat(
     session_id: str = Form(...),
-    event: str = Form(...)
+    event: str = Form(...),
+    db: Session= Depends(get_db)
 ):
     state = sessions.get(session_id)
+
+    if not state:
+       state = restore_session_from_db(session_id, db)
 
     if not state:
         return {"error": "Invalid session"}
@@ -273,7 +308,7 @@ async def report_cheat(
     }
 
 @router.post("/close-interview")
-async def close_interview(session_id: str = Form(...)):
+async def close_interview(session_id: str = Form(...), db: Session = Depends(get_db)):
     state = sessions.get(session_id)
     if not state:
         return {"error": "Invalid session"}
@@ -282,8 +317,14 @@ async def close_interview(session_id: str = Form(...)):
     state["phase"] = "FINAL"
     sessions[session_id] = state
 
+    # Update database status
+    interview = crud.update_interview_status(db, session_id, "closed")
+    if interview and interview.invite_id:
+        crud.update_invite_status(db, interview.invite_id, "closed")
+
     return {"status": "closed"}
  
+
 
 
 
@@ -294,6 +335,10 @@ async def final_report(session_id: str = Form(...),db:Session=Depends(get_db)):
     print("FINAL REPORT CALLED")
 
     state = sessions.get(session_id)
+
+
+    if not state:
+        state = restore_session_from_db(session_id, db)
 
     if not state:
         print("Invalid session")
@@ -316,9 +361,34 @@ async def final_report(session_id: str = Form(...),db:Session=Depends(get_db)):
             interview_id=interview.id,
             report=state["final_report"]
         )
+        # Update database status to completed
+        crud.update_interview_status(db, session_id, "completed")
+        if interview.invite_id:
+            crud.update_invite_status(db, interview.invite_id, "completed")
 
     print("Final report generated")
 
     sessions[session_id] = state
 
+    collection = state.get("resume_collection_name")
+
+    if collection:
+        chroma_path = f"./chroma_db/{collection}"
+        if os.path.exists(chroma_path):
+            shutil.rmtree(chroma_path)
+    
+    if interview:
+        crud.update_interview_state(db, session_id, state)
+
     return {"report": state.get("final_report", "No report")}
+
+
+
+@router.get("/validate-invite/{token}")
+def validate_invite(token:str, db: Session=Depends(get_db)):
+    invite=crud.get_invite_by_token(db,token)
+
+    if not invite:
+        return {"valid": False}
+
+    return {"valid": True}

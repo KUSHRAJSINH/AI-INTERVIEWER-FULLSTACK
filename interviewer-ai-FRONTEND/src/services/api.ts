@@ -1,8 +1,9 @@
 const API_BASE = "http://localhost:8000/api";
 
-export async function startInterview(file: File) {
+export async function startInterview(file: File, token: string) {
   const formData = new FormData();
   formData.append("file", file);
+  formData.append("token", token);
 
   const res = await fetch(`${API_BASE}/start-interview`, {
     method: "POST",
@@ -101,6 +102,60 @@ export async function closeInterview(sessionId: string) {
 
   if (!res.ok) throw new Error("Failed to close interview");
 
+  return res.json();
+}
+
+export async function getAdminInterviews() {
+  const token = localStorage.getItem("admin_token");
+  const res = await fetch(`${API_BASE}/admin/interviews`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("Unauthorized");
+    throw new Error("Failed to fetch interviews");
+  }
+  return res.json();
+}
+
+export async function createAdminInterview(email: string) {
+  const token = localStorage.getItem("admin_token");
+  const res = await fetch(`${API_BASE}/admin/create-interview?email=${encodeURIComponent(email)}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("Unauthorized");
+    throw new Error("Failed to create interview");
+  }
+  return res.json();
+}
+
+export async function adminLogin(formData: FormData) {
+  const res = await fetch(`${API_BASE}/admin/login`, {
+    method: "POST",
+    body: formData,
+  });
+  if (!res.ok) throw new Error("Invalid username or password");
+  return res.json();
+}
+
+export async function deleteAdminInterview(inviteId: number) {
+  const token = localStorage.getItem("admin_token");
+  const res = await fetch(`${API_BASE}/admin/interviews/${inviteId}`, {
+    method: "DELETE",
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+  if (!res.ok) {
+    if (res.status === 401) throw new Error("Unauthorized");
+    if (res.status === 404) throw new Error("Not found");
+    throw new Error("Failed to delete interview");
+  }
   return res.json();
 }
 

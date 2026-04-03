@@ -3,9 +3,12 @@ import { Toaster as Sonner } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
+import Login from "./pages/Login";
 import ResumeUpload from "./pages/ResumeUpload";
 import InterviewRoom from "./pages/InterviewRoom";
 import Evaluation from "./pages/Evaluation";
+import ThankYou from "./pages/ThankYou";
+import AdminDashboard from "./pages/AdminDashboard";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -14,12 +17,17 @@ const App = () => (
   <QueryClientProvider client={queryClient}>
     <TooltipProvider>
       <Toaster />
-      <Sonner />  
+      <Sonner />
       <BrowserRouter>
         <Routes>
-          <Route path="/" element={<ResumeUpload />} />
+          <Route path="/" element={<Login />} />
+          <Route path="/upload" element={<ResumeUpload />} />
+          <Route path="/upload/:token" element={<ResumeUpload />} />
+          <Route path="/interview/:token" element={<ResumeUpload />} />
           <Route path="/interview" element={<InterviewRoom />} />
           <Route path="/evaluation" element={<Evaluation />} />
+          <Route path="/thank-you" element={<ThankYou />} />
+          <Route path="/admin" element={<AdminDashboard />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
@@ -28,6 +36,6 @@ const App = () => (
 );
 
 export default App;
-        
+
 
 

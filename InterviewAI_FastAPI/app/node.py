@@ -219,13 +219,17 @@ import time
 import os
 import json
 from dotenv import load_dotenv
+import requests
+import tempfile
 
 from langchain_openai import ChatOpenAI
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import UnstructuredPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from langchain_community.vectorstores import FAISS
+from langchain_community.vectorstores import Chroma
+from langchain_community.vectorstores.utils import filter_complex_metadata
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_groq import ChatGroq
+import uuid
 
 from app.state import InterviewState
 
@@ -236,7 +240,15 @@ load_dotenv()
 # Resume Loader
 # ==========================================================
 def load_resume(state: InterviewState):
-    loader = PyPDFLoader(state["resume_path"])
+    url = state["resume_path"]
+    
+    response = requests.get(url)
+    
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as f:
+        f.write(response.content)
+        temp_path = f.name
+        
+    loader = UnstructuredPDFLoader(temp_path, mode="elements", strategy="fast")
     docs = loader.load()
 
     splitter = RecursiveCharacterTextSplitter(
@@ -244,12 +256,24 @@ def load_resume(state: InterviewState):
     )
     chunks = splitter.split_documents(docs)
 
-    state["resume_vectorstore"] = FAISS.from_documents(
-        chunks,
-        HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
+    collection_name = f"resume_{uuid.uuid4().hex}"
+    
+    if not chunks:
+        # Fallback if unstructured fails to extract text
+        from langchain_core.documents import Document
+        chunks = [Document(page_content="Candidate Name: Candidate. No text extracted from resume.")]
+
+    # Sanitize metadata (Chroma does not support complex dicts in metadata like bounding boxes)
+    sanitized_chunks = filter_complex_metadata(chunks)
+
+    Chroma.from_documents(
+        documents=sanitized_chunks,
+        embedding=HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2"),
+        persist_directory="./chroma_db",
+        collection_name=collection_name
     )
+    
+    state["resume_collection_name"] = collection_name
     return state
 
 
@@ -266,7 +290,13 @@ def extract_candidate_name(state: InterviewState):
                 
      )"""
 
-    docs = state["resume_vectorstore"].similarity_search(
+    vectorstore = Chroma(
+        persist_directory="./chroma_db",
+        embedding_function=HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2"),
+        collection_name=state["resume_collection_name"]
+    )
+
+    docs = vectorstore.similarity_search(
         "candidate name", k=3
     )
     text = "\n".join(d.page_content for d in docs)
@@ -439,7 +469,13 @@ def generate_question(state: InterviewState):
         return state
 
     # 3. Technical Questions (Start from q_count >= 2)
-    docs = state["resume_vectorstore"].similarity_search(
+    vectorstore = Chroma(
+        persist_directory="./chroma_db",
+        embedding_function=HuggingFaceEmbeddings(model_name="sentence-transformers/all-MiniLM-L6-v2"),
+        collection_name=state["resume_collection_name"]
+    )
+
+    docs = vectorstore.similarity_search(
         "skills experience projects", k=4
     )
     context = "\n".join(d.page_content for d in docs)

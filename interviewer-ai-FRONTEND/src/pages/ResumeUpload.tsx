@@ -1,11 +1,12 @@
 import { useState, useCallback } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { Upload, Camera, Mic, CheckCircle, ArrowRight } from "lucide-react";
 import heroBg from "@/assets/hero-bg.jpg";
 import { startInterview } from "@/services/api";
 
 const ResumeUpload = () => {
   const navigate = useNavigate();
+  const { token } = useParams();
   const [file, setFile] = useState<File | null>(null);
   const [isDragging, setIsDragging] = useState(false);
   const [cameraOk, setCameraOk] = useState(false);
@@ -45,11 +46,15 @@ const ResumeUpload = () => {
 
   const handleStartInterview = async () => {
     if (!file) return;
+    if (!token) {
+      alert("Invite token is missing. Please use the link provided in your email.");
+      return;
+    }
 
     try {
       setLoading(true);
 
-      const data = await startInterview(file);
+      const data = await startInterview(file, token);
 
       localStorage.setItem("session_id", data.session_id);
 

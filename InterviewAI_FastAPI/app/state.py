@@ -49,7 +49,7 @@ class InterviewState(TypedDict):
     # Resume
     resume_path: str
     candidate_name: str
-    resume_vectorstore: Any
+    resume_collection_name: str
 
     # Current turn
     current_question: str

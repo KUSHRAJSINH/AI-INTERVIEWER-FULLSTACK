@@ -30,7 +30,7 @@ const Evaluation = () => {
         );
 
         const data = await response.json();
-        setReport(data.report); 
+        setReport(data.report);
       } catch (err) {
         console.error("Failed to fetch report:", err);
       } finally {
@@ -50,8 +50,13 @@ const Evaluation = () => {
           </h1>
           <button
             onClick={() => {
+              const role = localStorage.getItem("user_role");
               localStorage.removeItem("session_id");
-              navigate("/");
+              if (role === "admin") {
+                navigate("/admin");
+              } else {
+                navigate("/");
+              }
             }}
             className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors"
           >
@@ -74,7 +79,12 @@ const Evaluation = () => {
           ) : (
             <div className="prose prose-invert max-w-none text-sm leading-relaxed">
               <ReactMarkdown remarkPlugins={[remarkGfm]}>
-                {report}
+                {localStorage.getItem("user_role") === "candidate"
+                  ? report
+                    .split("### Hiring Summary")[0]
+                    .replace(/Score: \d+/gi, "Score: [Hidden]")
+                    .replace(/Points: \d+/gi, "Points: [Hidden]")
+                  : report}
               </ReactMarkdown>
             </div>
           )}

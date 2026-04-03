@@ -119,6 +119,27 @@ const InterviewRoom = () => {
     };
   }, [handleCheat]);
 
+  // ---------------- TAB CLOSURE DETECTION ----------------
+  useEffect(() => {
+    const handleBeforeUnload = () => {
+      if (sessionId) {
+        const formData = new FormData();
+        formData.append("session_id", sessionId);
+        // Use keepalive to ensure the request completes after tab is closed
+        fetch("http://localhost:8000/api/close-interview", {
+          method: "POST",
+          body: formData,
+          keepalive: true,
+        });
+      }
+    };
+
+    window.addEventListener("beforeunload", handleBeforeUnload);
+    return () => {
+      window.removeEventListener("beforeunload", handleBeforeUnload);
+    };
+  }, [sessionId]);
+
   useEffect(() => {
     if (integrityScore <= 10) {
       console.warn("Integrity score critically low. Warning shown.");
@@ -620,7 +641,7 @@ const InterviewRoom = () => {
       const data = await submitAnswer(sessionId, answer);
 
       if (data.status === "completed") {
-        navigate("/evaluation");
+        navigate("/thank-you");
       } else {
         setQuestion(data.question);
         setAnswer("");
@@ -649,7 +670,7 @@ const InterviewRoom = () => {
       await closeInterview(sessionId);
 
       // 4. Navigate
-      navigate("/evaluation");
+      navigate("/thank-you");
     } catch (err) {
       console.error("Failed to close interview", err);
       alert("Error closing interview");
